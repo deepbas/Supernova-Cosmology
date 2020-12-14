@@ -1,0 +1,147 @@
+---
+title: "SN Cosmology"
+output: pdf_document
+---
+
+```{r, warning=FALSE, message=FALSE}
+library(mcmcse)
+library(batchmeans)
+set.seed(1234)
+
+SNdata = read.table("/home/deepak/Desktop/Research/MyDissertation/Codes-Research/SNCosmology/data.dat",
+                    header=T) 
+
+#Name of Supernova
+SN = SNdata[,1]
+#Redshift
+z = SNdata[,2]
+#Distance Modulus
+x = SNdata[,3]
+#Error/Noise
+sigma  = SNdata[,4]
+#Supernovae type
+Type = SNdata[,5]
+
+n.iterations <- 20000
+n <- nrow(SNdata)
+       
+mchain  = matrix(NA, n.iterations, 2)
+
+#grid setup
+nzs      = 2000 
+zgrid    = vector(mode="double", length=nzs)
+D        = vector(mode="double", length=nzs)
+DL       = vector(mode="double", length=nzs)
+mu_table = vector(mode="double", length=nzs)
+theory   = vector(mode="double", length=n)
+	
+## Set up a fine grid of redshifts:
+
+Dz = 0.001
+zgrid <- seq(0.001,2,Dz)
+
+## Compute the first point (which has such a low z it is virtually independent of Omega_m)
+D[1]     = 3000 * zgrid[1]
+DL[1]    = D[1] * (1+zgrid[1])
+	
+acc = 0 # count number of accepted proposals         
+
+## starting values for Markov chain
+hINIT  = 0.8
+OMINIT = 0.3
+	
+## Set the first element of the chain to the initial values
+mchain[1,] = c(hINIT,OMINIT)
+	
+## Set sizes of very crude (top-hat) proposal distribution:
+Dh    = 0.02
+DOm   = 0.06
+
+## To save coding, let us just set the initial value of chisquared to a large number, 
+## so the first trial point is accepted
+	
+currChisquared = 9999999
+currh          = hINIT
+currOm         = OMINIT
+	
+## The MAIN LOOP:
+for (iter in 2:n.iterations)
+       {
+
+## sample from simple proposal distribution (top-hats: R function runif)
+
+			proph  = currh  + runif(1,-Dh,Dh)     # Uniform in (-Dh,Dh)
+      propOm = currOm + runif(1,-DOm,DOm)
+
+## Compute theoretical distance moduli for the proposed parameters.  
+## It would be much faster to precompute this as a function of Omega_m and z and interpolate.
+			 
+      for(i in 2:nzs) {
+            D[i]        = D[i-1] + 3000 * Dz/sqrt(propOm*(1+zgrid[i])^3+1-propOm)
+            DL[i]       = (1+zgrid[i]) * D[i]
+            mu_table[i] = 25 - 5 * log10(proph) + 5 * log10(DL[i])
+         }
+
+## Run through the SNe and assign the nearest mu_table value:
+
+      for(j in 1:length(z)) {
+            index     = z[j]/Dz
+            theory[j] = mu_table[index]
+         }
+
+## Calculate chisquared for the proposed point
+			 
+      propChisquared = sum(((x-theory)/sigma)^2)
+			 
+## Metropolis accept-reject step (in log scale)         
+
+      logMHratio = 0.5 * (currChisquared-propChisquared)
+      logalpha   = min(0,logMHratio) # alpha = min(1,MHratio)
+
+      if (log(runif(1))<logalpha) # accept if unif(0,1) < alpha 
+			 
+## runif(1) just returns one random number between 0 and 1
+## i.e. accept with probability alpha, else stay at current state
+			 
+    {
+             acc            = acc + 1          # increment count of accepted proposals
+             currChisquared = propChisquared
+             currh          = proph
+             currOm         = propOm
+           }
+			 
+## Store the result in the chain:
+			 
+         mchain[iter,] = c(currh,currOm)
+     }
+
+sigma.bm <- mcse.multi(mchain)
+
+plot(confRegion(sigma.bm, which=c(1,2), level = 0.95), type = "l")
+
+b <- floor(sqrt(nrow(mchain)))
+sigma.wbm <- 2* mcse.multi(mchain, method = "bartlett", size = b)[[1]] - mcse.multi(mchain, method = "bartlett", size = b/2)[[1]]
+
+#acf plots
+pdf("SNplots.pdf")
+par(mfrow = c(2,2))
+acf(mchain[,1], main = expression(paste("Lag Plot for ", h)))
+acf(mchain[,2], main = expression(paste("Lag Plot for ", Omega[m])))
+estvssamp(mchain[,1], main = expression(paste("Estimate of " , h , " vs Sample Size")))
+estvssamp(mchain[,2], main = expression(paste("Estimate of " , Omega[m] , " vs Sample Size")))
+par(mfrow=c(1,1))
+dev.off()
+
+#Confidence Regions
+pdf("Confregion.pdf")
+plot(confRegion(sigma.bm, which=c(1,2), level = 0.95), type = "l", xlab = expression(paste(h)), ylab = expression(paste(Omega[m])) , main = expression(paste("95", "% " , " Confidence Region for ", h, " and ", Omega[m])))
+points(0.6295399, 0.3224457, pch = 20)
+text(0.62956, 0.3221, expression(paste(h, "= 0.629539")),
+     cex = .8)
+text(0.62956, 0.3219, expression(paste(Omega[m], "= 0.322445")),
+     cex = .8)
+dev.off()
+
+
+
+```
